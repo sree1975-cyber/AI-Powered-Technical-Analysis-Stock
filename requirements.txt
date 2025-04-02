@@ -37,6 +37,7 @@ streamlit-option-menu
 streamlit-lottie
 requests
 ollama
+kaleido
 
 
 
