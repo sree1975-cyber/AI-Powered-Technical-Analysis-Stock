@@ -1,7 +1,7 @@
 streamlit
 numpy<2
 pandas
-yfinance<=0.2.44
+yfinance==0.2.40
 plotly
 datetime
 python-docx
