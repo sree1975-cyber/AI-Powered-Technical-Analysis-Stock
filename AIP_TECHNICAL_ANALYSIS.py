@@ -8,11 +8,22 @@ import ollama
 import tempfile
 import base64
 import os
+import time
 
 # Set up Streamlit app
 st.set_page_config(layout="wide")
 st.title("AI-Powered Technical Stock Analysis Dashboard")
 st.sidebar.header("Configuration")
+
+# Initialize Ollama client with error handling
+try:
+    ollama_client = ollama.Client(host='http://localhost:11434')  # Default Ollama port
+    available_models = [model['name'] for model in ollama_client.list()['models']]
+    if 'llama3.2-vision' not in available_models:
+        st.warning("llama3.2-vision model not found in Ollama. Please pull it first.")
+except Exception as e:
+    st.error(f"Failed to connect to Ollama: {str(e)}")
+    st.stop()
 
 # Input for stock ticker and date range
 ticker = st.sidebar.text_input("Enter Stock Ticker (e.g., AAPL):", "AAPL")
@@ -21,8 +32,11 @@ end_date = st.sidebar.date_input("End Date", value=pd.to_datetime("2024-12-14"))
 
 # Fetch stock data
 if st.sidebar.button("Fetch Data"):
-    st.session_state["stock_data"] = yf.download(ticker, start=start_date, end=end_date)
-    st.success("Stock data loaded successfully!")
+    try:
+        st.session_state["stock_data"] = yf.download(ticker, start=start_date, end=end_date)
+        st.success("Stock data loaded successfully!")
+    except Exception as e:
+        st.error(f"Error fetching stock data: {str(e)}")
 
 # Check if data is available
 if "stock_data" in st.session_state:
@@ -36,7 +50,7 @@ if "stock_data" in st.session_state:
             high=data['High'],
             low=data['Low'],
             close=data['Close'],
-            name="Candlestick"  # Replace "trace 0" with "Candlestick"
+            name="Candlestick"
         )
     ])
 
@@ -71,37 +85,57 @@ if "stock_data" in st.session_state:
     for indicator in indicators:
         add_indicator(indicator)
 
-    fig.update_layout(xaxis_rangeslider_visible=False)
-    st.plotly_chart(fig)
+    fig.update_layout(
+        xaxis_rangeslider_visible=False,
+        height=600,
+        title=f"{ticker} Stock Price with Technical Indicators"
+    )
+    st.plotly_chart(fig, use_container_width=True)
 
     # Analyze chart with LLaMA 3.2 Vision
     st.subheader("AI-Powered Analysis")
     if st.button("Run AI Analysis"):
         with st.spinner("Analyzing the chart, please wait..."):
-            # Save chart as a temporary image
-            with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmpfile:
-                fig.write_image(tmpfile.name)
-                tmpfile_path = tmpfile.name
+            try:
+                # Save chart as a temporary image
+                with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmpfile:
+                    fig.write_image(tmpfile.name, format='png', width=1200, height=800)
+                    tmpfile_path = tmpfile.name
 
-            # Read image and encode to Base64
-            with open(tmpfile_path, "rb") as image_file:
-                image_data = base64.b64encode(image_file.read()).decode('utf-8')
+                # Read image and encode to Base64
+                with open(tmpfile_path, "rb") as image_file:
+                    image_data = base64.b64encode(image_file.read()).decode('utf-8')
 
-            # Prepare AI analysis request
-            messages = [{
-                'role': 'user',
-                'content': """You are a Stock Trader specializing in Technical Analysis at a top financial institution.
-                            Analyze the stock chart's technical indicators and provide a buy/hold/sell recommendation.
-                            Base your recommendation only on the candlestick chart and the displayed technical indicators.
-                            First, provide the recommendation, then, provide your detailed reasoning.
-                """,
-                'images': [image_data]
-            }]
-            response = ollama.chat(model='llama3.2-vision', messages=messages)
+                # Prepare AI analysis request
+                messages = [{
+                    'role': 'user',
+                    'content': """You are a Stock Trader specializing in Technical Analysis at a top financial institution.
+                                Analyze the stock chart's technical indicators and provide a buy/hold/sell recommendation.
+                                Base your recommendation only on the candlestick chart and the displayed technical indicators.
+                                First, provide the recommendation, then, provide your detailed reasoning.
+                                Be concise but thorough in your analysis.
+                    """,
+                    'images': [image_data]
+                }]
+                
+                # Add retry logic for the Ollama call
+                max_retries = 3
+                for attempt in range(max_retries):
+                    try:
+                        response = ollama.chat(model='llama3.2-vision', messages=messages)
+                        break
+                    except Exception as e:
+                        if attempt == max_retries - 1:
+                            raise
+                        time.sleep(2)  # Wait before retrying
 
-            # Display AI analysis result
-            st.write("**AI Analysis Results:**")
-            st.write(response["message"]["content"])
+                # Display AI analysis result
+                st.write("**AI Analysis Results:**")
+                st.write(response["message"]["content"])
 
-            # Clean up temporary file
-            os.remove(tmpfile_path)
+            except Exception as e:
+                st.error(f"Error during AI analysis: {str(e)}")
+            finally:
+                # Clean up temporary file
+                if 'tmpfile_path' in locals() and os.path.exists(tmpfile_path):
+                    os.remove(tmpfile_path)
