@@ -1,5 +1,3 @@
-## NOTE: Set yfinance to the following version to get chart working: "pip install yfinance==0.2.40"
-
 import streamlit as st
 import yfinance as yf
 import pandas as pd
@@ -10,39 +8,45 @@ import base64
 import os
 import time
 
-# Set up Streamlit app
+# Configuration
 st.set_page_config(layout="wide")
 st.title("AI-Powered Technical Stock Analysis Dashboard")
-st.sidebar.header("Configuration")
 
-# Initialize Ollama client with error handling
+# --- Ollama Setup (Works Locally + Cloud) ---
+OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://localhost:11434")  # Default local, override with env var
+
 try:
-    ollama_client = ollama.Client(host='http://localhost:11434')  # Default Ollama port
-    available_models = [model['name'] for model in ollama_client.list()['models']]
-    if 'llama3.2-vision' not in available_models:
-        st.warning("llama3.2-vision model not found in Ollama. Please pull it first.")
+    ollama_client = ollama.Client(host=OLLAMA_HOST)
+    # Test connection
+    ollama_client.list()
 except Exception as e:
-    st.error(f"Failed to connect to Ollama: {str(e)}")
+    st.error(f"⚠️ Failed to connect to Ollama at {OLLAMA_HOST}. Error: {str(e)}")
+    st.warning("""
+        To fix this:
+        1. For local runs: Ensure Ollama is installed and running (`ollama serve`).
+        2. For Streamlit Cloud: Host Ollama on a cloud server and set `OLLAMA_HOST` in secrets.
+    """)
     st.stop()
 
-# Input for stock ticker and date range
+# --- Sidebar Controls ---
+st.sidebar.header("Configuration")
 ticker = st.sidebar.text_input("Enter Stock Ticker (e.g., AAPL):", "AAPL")
-start_date = st.sidebar.date_input("Start Date", value=pd.to_datetime("2023-01-01"))
-end_date = st.sidebar.date_input("End Date", value=pd.to_datetime("2024-12-14"))
+start_date = st.sidebar.date_input("Start Date", pd.to_datetime("2023-01-01"))
+end_date = st.sidebar.date_input("End Date", pd.to_datetime("2024-12-14"))
 
 # Fetch stock data
 if st.sidebar.button("Fetch Data"):
     try:
         st.session_state["stock_data"] = yf.download(ticker, start=start_date, end=end_date)
-        st.success("Stock data loaded successfully!")
+        st.success(f"Successfully loaded {ticker} data!")
     except Exception as e:
-        st.error(f"Error fetching stock data: {str(e)}")
+        st.error(f"Failed to fetch data: {str(e)}")
 
-# Check if data is available
+# --- Main Chart Logic ---
 if "stock_data" in st.session_state:
     data = st.session_state["stock_data"]
 
-    # Plot candlestick chart
+    # Candlestick chart
     fig = go.Figure(data=[
         go.Candlestick(
             x=data.index,
@@ -50,11 +54,11 @@ if "stock_data" in st.session_state:
             high=data['High'],
             low=data['Low'],
             close=data['Close'],
-            name="Candlestick"
+            name="Price"
         )
     ])
 
-    # Sidebar: Select technical indicators
+    # Technical indicators
     st.sidebar.subheader("Technical Indicators")
     indicators = st.sidebar.multiselect(
         "Select Indicators:",
@@ -62,80 +66,71 @@ if "stock_data" in st.session_state:
         default=["20-Day SMA"]
     )
 
-    # Helper function to add indicators to the chart
     def add_indicator(indicator):
         if indicator == "20-Day SMA":
-            sma = data['Close'].rolling(window=20).mean()
-            fig.add_trace(go.Scatter(x=data.index, y=sma, mode='lines', name='SMA (20)'))
+            sma = data['Close'].rolling(20).mean()
+            fig.add_trace(go.Scatter(x=data.index, y=sma, name='SMA (20)'))
         elif indicator == "20-Day EMA":
             ema = data['Close'].ewm(span=20).mean()
-            fig.add_trace(go.Scatter(x=data.index, y=ema, mode='lines', name='EMA (20)'))
+            fig.add_trace(go.Scatter(x=data.index, y=ema, name='EMA (20)'))
         elif indicator == "20-Day Bollinger Bands":
-            sma = data['Close'].rolling(window=20).mean()
-            std = data['Close'].rolling(window=20).std()
-            bb_upper = sma + 2 * std
-            bb_lower = sma - 2 * std
-            fig.add_trace(go.Scatter(x=data.index, y=bb_upper, mode='lines', name='BB Upper'))
-            fig.add_trace(go.Scatter(x=data.index, y=bb_lower, mode='lines', name='BB Lower'))
+            sma = data['Close'].rolling(20).mean()
+            std = data['Close'].rolling(20).std()
+            fig.add_trace(go.Scatter(x=data.index, y=sma + 2*std, name='BB Upper'))
+            fig.add_trace(go.Scatter(x=data.index, y=sma - 2*std, name='BB Lower'))
         elif indicator == "VWAP":
             data['VWAP'] = (data['Close'] * data['Volume']).cumsum() / data['Volume'].cumsum()
-            fig.add_trace(go.Scatter(x=data.index, y=data['VWAP'], mode='lines', name='VWAP'))
+            fig.add_trace(go.Scatter(x=data.index, y=data['VWAP'], name='VWAP'))
 
-    # Add selected indicators to the chart
     for indicator in indicators:
         add_indicator(indicator)
 
     fig.update_layout(
-        xaxis_rangeslider_visible=False,
         height=600,
-        title=f"{ticker} Stock Price with Technical Indicators"
+        xaxis_rangeslider_visible=False,
+        title=f"{ticker} Stock Analysis"
     )
     st.plotly_chart(fig, use_container_width=True)
 
-    # Analyze chart with LLaMA 3.2 Vision
-    st.subheader("AI-Powered Analysis")
-    if st.button("Run AI Analysis"):
-        with st.spinner("Analyzing the chart, please wait..."):
+    # --- AI Analysis Section ---
+    st.subheader("AI Technical Analysis")
+    if st.button("Generate AI Analysis"):
+        with st.spinner("Analyzing chart with AI..."):
             try:
-                # Save chart as a temporary image
+                # Save chart as image
                 with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmpfile:
-                    fig.write_image(tmpfile.name, format='png', width=1200, height=800)
-                    tmpfile_path = tmpfile.name
+                    fig.write_image(tmpfile.name, format='png', width=1200)
+                    tmp_path = tmpfile.name
 
-                # Read image and encode to Base64
-                with open(tmpfile_path, "rb") as image_file:
-                    image_data = base64.b64encode(image_file.read()).decode('utf-8')
+                # Encode image
+                with open(tmp_path, "rb") as f:
+                    img_b64 = base64.b64encode(f.read()).decode("utf-8")
 
-                # Prepare AI analysis request
+                # AI Prompt
                 messages = [{
                     'role': 'user',
-                    'content': """You are a Stock Trader specializing in Technical Analysis at a top financial institution.
-                                Analyze the stock chart's technical indicators and provide a buy/hold/sell recommendation.
-                                Base your recommendation only on the candlestick chart and the displayed technical indicators.
-                                First, provide the recommendation, then, provide your detailed reasoning.
-                                Be concise but thorough in your analysis.
-                    """,
-                    'images': [image_data]
+                    'content': """As a senior technical analyst, analyze this stock chart.
+                        Provide: 1) Clear buy/hold/sell recommendation, 2) Key support/resistance levels,
+                        3) Notable patterns, and 4) Confidence level (low/medium/high).""",
+                    'images': [img_b64]
                 }]
-                
-                # Add retry logic for the Ollama call
+
+                # Retry logic for Ollama
                 max_retries = 3
                 for attempt in range(max_retries):
                     try:
-                        response = ollama.chat(model='llama3.2-vision', messages=messages)
+                        response = ollama_client.chat(model='llama3.2-vision', messages=messages)
                         break
                     except Exception as e:
                         if attempt == max_retries - 1:
                             raise
-                        time.sleep(2)  # Wait before retrying
+                        time.sleep(2)
 
-                # Display AI analysis result
-                st.write("**AI Analysis Results:**")
-                st.write(response["message"]["content"])
+                st.success("AI Analysis Complete!")
+                st.markdown(f"**Recommendation:** {response['message']['content']}")
 
             except Exception as e:
-                st.error(f"Error during AI analysis: {str(e)}")
+                st.error(f"AI analysis failed: {str(e)}")
             finally:
-                # Clean up temporary file
-                if 'tmpfile_path' in locals() and os.path.exists(tmpfile_path):
-                    os.remove(tmpfile_path)
+                if os.path.exists(tmp_path):
+                    os.remove(tmp_path)
