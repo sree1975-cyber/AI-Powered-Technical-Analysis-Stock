@@ -13,7 +13,7 @@ st.set_page_config(layout="wide")
 st.title("AI-Powered Technical Stock Analysis Dashboard")
 
 # --- Ollama Setup (Works Locally + Cloud) ---
-OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://localhost:11434")  # Default local, override with env var
+OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://localhost:127.0.0.1:11434")  # Default local, override with env var
 
 try:
     ollama_client = ollama.Client(host=OLLAMA_HOST)
